@@ -1456,7 +1456,7 @@ int main()
 {
 	
     int ret = 0;
-    int one_size=320;
+    int one_size=315;
     char* file_name=malloc(50*sizeof(char));
     file_name=strcpy(file_name,"test.xml");
     char * xpath_name=malloc(50*sizeof(char));

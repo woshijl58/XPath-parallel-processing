@@ -6,5 +6,4 @@ formation-->
         <salesman age="28" level="1" sex="male">Jack</salesman> <!--salesman information-->
     </sales>
     <develop>
-        <programmer age="35" sex="famale">Jane</programmer>
-    
+        <programmer age="35" sex="famale">Jane</programmer>
