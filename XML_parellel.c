@@ -4,10 +4,14 @@
 #include <ctype.h>
 #include <crtdbg.h>
 #include <pthread.h>
+#include <malloc.h>
+#include <time.h>
 
 #define MAX_THREAD 10
 pthread_t thread[MAX_THREAD]; 
 int thread_args[MAX_THREAD];
+int finish_args[MAX_THREAD];
+char * tempTextString[MAX_THREAD];
 
 typedef struct{
 	int start;
@@ -17,6 +21,7 @@ typedef struct{
 }Automata;
 
 #define MAX_SIZE 50
+#define MAX_OUTPUT 20000
 Automata stateMachine[MAX_SIZE];
 
 typedef struct Node{
@@ -104,7 +109,7 @@ void print_result(ResultSet set);
 void add_node(Node* node, Node* root);  //for finish tree
 void push(Node* node, Node* root, int nextState); //push new element into stack
 int checkChildren(Node* node);  //return value--the number of children -1--no child
-void pop(char * str, Node* root); //pop element due to end_tag e.g</d>
+void pop(char * str, Node* root, int thread_num); //pop element due to end_tag e.g</d>
 char* xml_substring(xml_Text *pText, int begin, int end);
 char* substring(char *pText, int begin, int end);
 char* convertTokenTypeToStr(xml_TokenType type);
@@ -161,16 +166,24 @@ int split_file(char* file_name,int one_size)
     rewind(fp);
     n=size/one_size;
     char* buff = (char*)malloc(one_size*sizeof(char));
+    char ch;
+    int temp_one_size=0;
     for (i=0;i<n;i++)
     {
         sprintf(nameout,"%d.xml",i);
         fout = fopen(nameout,"wb");
         k = fread (buff,1,one_size,fp);
         fwrite(buff,1,one_size,fout);
+        ch=buff[one_size-1];
+        while(ch!='>'&&ch!=' '&&ch!=-1&&fp!=NULL)
+        {
+        	ch=fgetc(fp);
+        	fputc(ch,fout);
+        	temp_one_size++;
+		}
         fclose(fout);
-        printf("output in %s\n",nameout);
     }
-    j = size % one_size;
+    j = size % one_size-temp_one_size;
     if (j!=0) {
     sprintf(nameout,"%d.xml",n);
     fout = fopen(nameout,"wb");
@@ -224,7 +237,7 @@ void createTree(int thread_num)
 			finish_root[thread_num]->children[i]->children[j]=NULL;
 		}
 		finish_root[thread_num]->children[i]->hasOutput=0;
-		finish_root[thread_num]->children[i]->output=(char*)malloc(MAX_SIZE*sizeof(char));
+		finish_root[thread_num]->children[i]->output=(char*)malloc(MAX_OUTPUT*sizeof(char));
 		finish_root[thread_num]->children[i]->output=strcpy(finish_root[thread_num]->children[i]->output,"");
 		finish_root[thread_num]->children[i]->start_node=(Node*)malloc(sizeof(Node));
 		start_root[thread_num]->children[i]->finish_node=(Node*)malloc(sizeof(Node));
@@ -264,7 +277,7 @@ void createTree_first(int start_state)
 			start_root[thread_num]->children[i]=(Node*)malloc(sizeof(Node));
 		    finish_root[thread_num]->children[i]=(Node*)malloc(sizeof(Node));
 		    finish_root[thread_num]->children[i]->hasOutput=0;
-		    finish_root[thread_num]->children[i]->output=(char*)malloc(MAX_SIZE*sizeof(char));
+		    finish_root[thread_num]->children[i]->output=(char*)malloc(MAX_OUTPUT*sizeof(char));
 		    finish_root[thread_num]->children[i]->output=strcpy(finish_root[thread_num]->children[i]->output,"");
 		    for(j=0;j<=stateCount;j++)
 		    {
@@ -307,7 +320,7 @@ void print_tree(Node* tree,int layer)
 	int top=-1;
 	int buttom=-1;
 	int lastlayer=0;
-	printf("the 0 layer only includes the root node and its state is -1;");
+	printf("the 0th layer only includes the root node and its state is -1;");
 	for(i=0;i<=stateCount;i++)
 	{
 		
@@ -418,7 +431,7 @@ ResultSet getresult(int n)
 	        if(set.hasOutput==1)
 	        {
 		        if(final_set.output==NULL)  {
-			        final_set.output=(char*)malloc(MAX_SIZE*sizeof(char));
+			        final_set.output=(char*)malloc(MAX_OUTPUT*sizeof(char));
 			        memset(final_set.output,0,sizeof(final_set.output));
 		        }
 		        if(i>0){
@@ -446,7 +459,7 @@ ResultSet getresult(int n)
 	            {
 		            for(k=0;k<set.topbegin;k++)
 		            {
-			            if(final_set.end_stack[k]!=set.begin_stack[k])
+			            if(final_set.end_stack[set.topbegin-k-1]!=set.begin_stack[k])
 			            {
 				            equal_flag=1;
 				            break;
@@ -455,17 +468,17 @@ ResultSet getresult(int n)
 	            }
                 if(equal_flag==0)
                 {
-    	            for(k=0;k<set.topend;k++)
+                	final_set.topend=set.topend;         //end_stack is equal to the current set
+	            	for(k=0;k<set.topend;k++)
     	            {
-    		            final_set.end_stack[final_set.topend++]=set.end_stack[k];  //merge
+    		            final_set.end_stack[k]=set.end_stack[k];  
 		            }
 	            }
 	            else
 	            {
-	            	final_set.topend=set.topend;         //end_stack is equal to the current set
 	            	for(k=0;k<set.topend;k++)
     	            {
-    		            final_set.end_stack[k]=set.end_stack[k];  
+    		            final_set.end_stack[final_set.topend++]=set.end_stack[k];  //merge
 		            }
 				}
             }
@@ -485,15 +498,15 @@ void print_result(ResultSet set)
 	}
 	int i;
 	printf("The mapping for this part is: %d,  ",set.begin);
-	for(i=set.topbegin-1;i>=0;i--)
+	for(i=0;i<set.topbegin;i++)  //-----
 	{
-		printf("%d:",set.begin_stack[set.topbegin--]);
+		printf("%d:",set.begin_stack[i]);
 	}
     printf(",  ");
 	printf("%d,  ",set.end);
 	for(i=set.topend-1;i>=0;i--)
 	{
-		printf("%d:",set.end_stack[set.topend--]);
+		printf("%d:",set.end_stack[i]);
 	}
 	printf(",  ");
 	if(set.output!=NULL)  printf("%s\n",set.output);
@@ -530,7 +543,7 @@ void push(Node* node, Node* root, int nextState) //push new element into stack
     n=(Node*)malloc(sizeof(Node));
     n->state=node->state;
     n->hasOutput=0;
-    n->output=(char*)malloc(MAX_LINE*sizeof(char));
+    n->output=(char*)malloc(MAX_OUTPUT*sizeof(char));
     n->output=strcpy(n->output,"");
     n->start_node=(Node*)malloc(sizeof(Node));
     n->finish_node=(Node*)malloc(sizeof(Node));
@@ -582,7 +595,7 @@ int checkChildren(Node* node)  //return value--the number of children -1--no chi
 	else return -1;
 }
 
-void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
+void pop(char * str, Node* root, int thread_num) //pop element due to end_tag e.g</d>
 {
     int i,j,begin,next;
     int flag=0;
@@ -595,6 +608,11 @@ void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
         {
             break;
 		}
+	}
+	if(j<1)  //---
+	{
+		if(tempTextString[thread_num]) free(tempTextString[thread_num]);
+		tempTextString[thread_num]=NULL;
 	}
 	if(j>=1)
 	{
@@ -611,15 +629,33 @@ void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
 		}
 		if(j<=stateCount)
 		{
+			if(tempTextString[thread_num]!=NULL) //---
+			{
+				if(root->children[j]->hasOutput!=1)
+				{
+					root->children[j]->output=(char* )malloc(MAX_OUTPUT*sizeof(char));
+					root->children[j]->output=strcpy(root->children[j]->output,tempTextString[thread_num]);
+					root->children[j]->hasOutput=1;
+				}
+				else{
+					root->children[j]->output=strcat(root->children[j]->output," ");
+					root->children[j]->output=strcat(root->children[j]->output,tempTextString[thread_num]);
+				} 
+				if(tempTextString[thread_num]) free(tempTextString[thread_num]);
+		        tempTextString[thread_num]=NULL;
+		        //}
+			}
 			n=root->children[j]->children[next];  //for state j
 			if(n!=NULL&&n->state==next)
 			{
-				if(isoutput==1)
-				{
+				if(root->children[j]->hasOutput==1)
+				{					
 					if(n->hasOutput==1)
 					    n->output=strcat(n->output," ");
-					else n->hasOutput=1;
+					else n->hasOutput=1;					
 					n->output=strcat(n->output,root->children[j]->output);
+					if(root->children[j]->output!=NULL) free(root->children[j]->output);
+					root->children[j]->output=NULL;
 					root->children[j]->hasOutput=0;
 				}
 				n->parent=NULL;
@@ -629,12 +665,14 @@ void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
 				if(checkChildren(root->children[j])==-1)
 				{
 					if(root->children[j]->start_node!=NULL)  free(root->children[j]->start_node);
+					if(root->children[j]->finish_node!=NULL)  free(root->children[j]->finish_node);
+					root->children[j]->start_node=NULL;
+					root->children[j]->finish_node=NULL;
 					root->children[j]->parent=NULL;
-					if(root->children[j]) free(root->children[j]);
+					if(root->children[j]!=NULL) free(root->children[j]);
 					root->children[j]=NULL;
 					flag=1;
 				}
-				
 				if(root->children[0]!=NULL)
 				{
 					for(i=stateCount;i>=0;i--)  //for state0
@@ -648,6 +686,15 @@ void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
 					        root->children[0]->children[i]=NULL;
 					        if(i==0){
 					            root->children[0]->parent=NULL;
+					            if(root->children[0]->start_node!=NULL) free(root->children[0]->start_node);
+					            if(root->children[0]->finish_node!=NULL) free(root->children[0]->finish_node);
+					            if(root->children[0]->output!=NULL) free(root->children[0]->output);
+					            root->children[0]->start_node=NULL;
+					            root->children[0]->finish_node=NULL;
+					            root->children[0]->output=NULL;
+					            if(root->children[0]!=NULL) {
+								    free(root->children[0]);
+								}
 					            root->children[0]=NULL;
 							}
 					        add_node(n,root);
@@ -658,6 +705,21 @@ void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
 			else if(flag==0) //not in final tree, add it into the start tree
 			   {
 			   	    n=root->children[begin]->start_node;
+			   	    if(tempTextString[thread_num]) //---
+			        {
+				        if(root->children[begin]->hasOutput!=1)
+				        {
+					        root->children[begin]->output=(char* )malloc(MAX_OUTPUT*sizeof(char));
+					        root->children[begin]->output=strcpy(root->children[begin]->output,tempTextString[thread_num]);
+					        root->children[begin]->hasOutput=1;
+				        }
+				        else{
+					        root->children[begin]->output=strcat(root->children[begin]->output," ");
+					        root->children[begin]->output=strcat(root->children[begin]->output,tempTextString[thread_num]);
+				            } 
+				        if(tempTextString[thread_num]) free(tempTextString[thread_num]);
+		                tempTextString[thread_num]=NULL;
+			        }
 			   	    if(n!=NULL)
 				    {
 				    	if(root->children[next]->start_node!=NULL)
@@ -676,6 +738,7 @@ void pop(char * str, Node* root) //pop element due to end_tag e.g</d>
 				            {
 					            root->children[next]->hasOutput=1;
 					            root->children[next]->output=strcpy(ns->finish_node->output,root->children[begin]->output);
+					            
 					            root->children[begin]->hasOutput=0;
 				            }
                             root->children[begin]->start_node=ns;
@@ -910,9 +973,13 @@ int xml_process(xml_Text *pText, xml_Token *pToken, int multilineExp, int multil
                        //printf(";\n\n");
                        
                        char* subs=xml_substring(&pToken->text , 1 , pToken->text.len-1);
-                       pop(subs,finish_root[thread_num]);
+                       //if(thread_num==1) 
+					   //printf("pop1!!! %s\n",pText->p);
+                       pop(subs,finish_root[thread_num],thread_num);
+                       //if(thread_num==1) printf("pop2!!!");
                        pToken->text.p = start + templen;
                        start = pToken->text.p;
+                       //printf("pop2!!!");
                        //layer--;
                        state = 0;
                        break;
@@ -1052,7 +1119,6 @@ int xml_process(xml_Text *pText, xml_Token *pToken, int multilineExp, int multil
                        start = pToken->text.p;
                        state = 0;
                        break;
-                      //return 1;
                    default:
                        state = -1;
                    break;
@@ -1095,8 +1161,31 @@ int xml_process(xml_Text *pText, xml_Token *pToken, int multilineExp, int multil
 					           else tempnode->children[j]->hasOutput=1;
 					           tempnode->children[j]->output=strcat(tempnode->children[j]->output,sub);
 					       }
+					       if(cmpstr!=NULL) free(cmpstr);
+					       if(sub!=NULL) free(sub);
 				       }
+				       else if(sub!=NULL) {
+				       	    if(sub[0]>0){
+				       	    	tempTextString[thread_num]=sub;
+							}
+							else free(sub);
+					   }
+				       
                        break;
+                   case '>':  //---
+                        pToken->text.len = p - start + 1;
+                        pToken->type = xml_tt_T;
+                       //printf("type=%s;  depth=%d;  ", convertTokenTypeToStr(pToken->type) , layer);
+                       //printf("%s","content=");
+                       
+                        templen = pToken->text.len;
+                        pToken->text.len -= strlen(pToken->text.p)-strlen(ltrim(pToken->text.p));
+                       //xml_print(&pToken->text, 2 , pToken->text.len-1);
+                       //printf(";\n\n");
+                       pToken->text.p = start + templen;
+                        start = pToken->text.p;
+                        state = 0;
+                        break;
                    default:
                        state = 7;
                        break;
@@ -1359,10 +1448,22 @@ int xml_process(xml_Text *pText, xml_Token *pToken, int multilineExp, int multil
 					   
 		        if(strcmp(cmpstr,currentStr[thread_num])==0&&stateMachine[2*(finish_root[thread_num]->children[j]->state-1)].isoutput==1)
 		        {
-			        finish_root[thread_num]->children[j]->hasOutput=1;
+		        	if(finish_root[thread_num]->children[j]->hasOutput==1)
+						finish_root[thread_num]->children[j]->output=strcat(finish_root[thread_num]->children[j]->output," ");
+			        else finish_root[thread_num]->children[j]->hasOutput=1;
 			        finish_root[thread_num]->children[j]->output=strcat(finish_root[thread_num]->children[j]->output,sub);
-		        }            
+		        }
+		        if(cmpstr!=NULL) free(cmpstr);
+			    if(sub!=NULL) free(sub);	          
      	    }
+     	    else if(sub!=NULL)
+			{
+			 	if(sub[0]>0)
+				{
+				    tempTextString[thread_num]=sub;
+				}
+				else free(sub);
+			} 
         }
 		return 0;
 	}
@@ -1403,13 +1504,15 @@ void *main_thread(void *arg)
         exit (1) ;
     }
     //printf("The results are listed as follows:\n");
+    int count=0;
     while(fgets(buf,MAX_LINE,fp) != NULL)
     {
         len = strlen(buf);
         xml_initText(&xml,buf);
         xml_initToken(&token, &xml);
-        
+        count++;
         ret = xml_process(&xml, &token, multiExp, multiCDATA, i);
+        usleep(100);
         
         if(ret == -1)
         {
@@ -1437,6 +1540,7 @@ void *main_thread(void *arg)
     printf("For the finish tree\n");
     print_tree(finish_root[i],0);
     fclose(fp);
+    finish_args[i]=1;
 	return NULL;
 }
 
@@ -1445,24 +1549,46 @@ void *main_thread(void *arg)
 void thread_wait(int n)
 {
 	int t;
+	while(1){
+		for( t = 0; t <= n; t++)
+	    {
+	    	if(finish_args[t]==0)
+	    	{
+	    		break;
+			}
+	    }
+	    if(t>n) break;
+	   usleep(10000);
+	}
+	/*
 	for( t = 0; t <= n; t++)
 	{
 		pthread_join(thread[t], NULL);
-	}
+	}*/
         
 }
 
 int main()
 {
-	
+	clock_t start,finish;
+	double duration;
     int ret = 0;
-    int one_size=315;
+    int one_size=320;
     char* file_name=malloc(50*sizeof(char));
     file_name=strcpy(file_name,"test.xml");
     char * xpath_name=malloc(50*sizeof(char));
     xpath_name=strcpy(xpath_name,"XPath.txt");
     printf("Welcome to the XML lexer program! Your file name is test.xml\n\n");
+    printf("input the size(byte) for each part of the subfile (note: input the number 0 is the default size 320 byte)\n");
+    scanf("%d",&one_size);
+    if(one_size==0) one_size=320;
+    printf("begin to split the file\n");
+    start=clock();
     int n=split_file(file_name,one_size);    //split file into several parts
+    printf("finish cutting the file, the number of threads is %d.\n",n);
+    finish=clock();
+    duration=(double)(finish-start)/CLOCKS_PER_SEC;   
+    printf("The duration for spliting the file is %lf\n",duration);
     
     if(n==-1)
     {
@@ -1470,6 +1596,8 @@ int main()
     	exit(1);
 	}
 	
+	printf("begin to deal with XML file\n");
+	start=clock();
 	char* xmlPath="/company/develop/programmer";
 	xmlPath=ReadXPath(xpath_name);
 	if(strcmp(xmlPath,"error")==0)
@@ -1505,12 +1633,13 @@ int main()
 		}	
 	}
 	printf("\n\n");
-    
     for(i=0;i<=n;i++)
     {
     	thread_args[i]=i;
+    	finish_args[i]=0;
+    	tempTextString[i]=NULL;
     	rc=pthread_create(&thread[i], NULL, main_thread, &thread_args[i]);  //parallel xml processing
-        
+        sleep(1);
     	if (rc)
         {
             printf("ERROR; return code is %d\n", rc);
@@ -1518,11 +1647,21 @@ int main()
         }
 	}
 	thread_wait(n);
+	printf("finish dealing with the file\n");
+	finish=clock();
+    duration=(double)(finish-start)/CLOCKS_PER_SEC;
+    printf("The duration for spliting the file is %lf\n",duration);
     printf("\n");
 	printf("All the subthread ended, now the program is merging its results.\n");
+	printf("begin to merge results\n");
+	start=clock();
 	ResultSet set=getresult(n);
 	printf("The mappings for text.xml is:\n");
 	print_result(set);
+	printf("finish merging these results\n");
+	finish=clock();
+    duration=(double)(finish-start)/CLOCKS_PER_SEC;
+    printf("The duration for merging these results is %lf\n",duration);
     
     system("pause");
     return 0;
